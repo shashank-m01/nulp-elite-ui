@@ -20,13 +20,18 @@ const firebaseConfig = {
 initializeApp(firebaseConfig)
 
 const firebaseApp = initializeApp(firebaseConfig)
-const messaging = getMessaging(firebaseApp)
+const isServiceWorkerAvailable = () =>
+  typeof navigator !== 'undefined' && 'serviceWorker' in navigator
+const messaging = isServiceWorkerAvailable() ? getMessaging(firebaseApp) : null
 
 const publicKey =
   'BFls0-nyyXAB7s9cuDx42ROIIoLD-N_pby0lh3clKxHgpsRdZtLpNRFD_n5Y5crh8o_6yiGPXgG60stW1xel2Hg'
 
 export const getUserToken = async (basePath = '') => {
   try {
+    if (!isServiceWorkerAvailable() || !messaging) {
+      return ''
+    }
     if (basePath && basePath !== '') {
       const path = basePath + '/firebase-messaging-sw.js'
       const serviceWorkerRegistration = await navigator.serviceWorker.register(
@@ -47,12 +52,16 @@ export const getUserToken = async (basePath = '') => {
   }
 }
 
-export const onMessageListener = () =>
-  new Promise((resolve) => {
+export const onMessageListener = () => {
+  if (!isServiceWorkerAvailable() || !messaging) {
+    return new Promise(() => {})
+  }
+  return new Promise((resolve) => {
     onMessage(messaging, (payload) => {
       resolve(payload)
     })
   })
+}
 
 export const PushNotification = () => {
   const toast = useToast()
