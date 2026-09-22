@@ -1,6 +1,11 @@
 import { initializeApp } from 'firebase/app'
 //import 'firebase/messaging'
-import { getMessaging, getToken, onMessage } from 'firebase/messaging'
+import {
+  getMessaging,
+  getToken,
+  onMessage,
+  isSupported
+} from 'firebase/messaging'
 import { useToast, Pressable, VStack, HStack, Box } from 'native-base'
 import Subtitle from '../layout/HeaderTags/Subtitle'
 import H1 from '../layout/HeaderTags/H1'
@@ -22,14 +27,20 @@ initializeApp(firebaseConfig)
 const firebaseApp = initializeApp(firebaseConfig)
 const isServiceWorkerAvailable = () =>
   typeof navigator !== 'undefined' && 'serviceWorker' in navigator
-const messaging = isServiceWorkerAvailable() ? getMessaging(firebaseApp) : null
+
+const messagingPromise = isServiceWorkerAvailable()
+  ? isSupported()
+      .then((supported) => (supported ? getMessaging(firebaseApp) : null))
+      .catch(() => null)
+  : Promise.resolve(null)
 
 const publicKey =
   'BFls0-nyyXAB7s9cuDx42ROIIoLD-N_pby0lh3clKxHgpsRdZtLpNRFD_n5Y5crh8o_6yiGPXgG60stW1xel2Hg'
 
 export const getUserToken = async (basePath = '') => {
   try {
-    if (!isServiceWorkerAvailable() || !messaging) {
+    const messaging = await messagingPromise
+    if (!messaging) {
       return ''
     }
     if (basePath && basePath !== '') {
@@ -52,9 +63,10 @@ export const getUserToken = async (basePath = '') => {
   }
 }
 
-export const onMessageListener = () => {
-  if (!isServiceWorkerAvailable() || !messaging) {
-    return new Promise(() => {})
+export const onMessageListener = async () => {
+  const messaging = await messagingPromise
+  if (!messaging) {
+    return Promise.reject(new Error('Firebase messaging is not supported'))
   }
   return new Promise((resolve) => {
     onMessage(messaging, (payload) => {
