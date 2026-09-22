@@ -21,6 +21,11 @@ import html2pdf from "html2pdf.js";
 const routeConfig = require("../../configs/routeConfig.json");
 import { Loading } from "@shiksha/common-lib";
 
+const getCertTimestamp = (cert) => {
+  const issuedOn = cert?.osCreatedAt || cert?.issuer?.osUpdatedAt;
+  return issuedOn ? new Date(issuedOn).getTime() : 0;
+};
+
 const getLatestCertificates = (certificates) => {
   const certList = Array.isArray(certificates)
     ? certificates
@@ -32,8 +37,7 @@ const getLatestCertificates = (certificates) => {
   certList.forEach((cert) => {
     const key = cert?.training?.id || cert?.training?.name || cert?.osid;
     if (!key) return;
-    const issuedOn = cert?.osCreatedAt || cert?.issuer?.osUpdatedAt;
-    const timestamp = issuedOn ? new Date(issuedOn).getTime() : 0;
+    const timestamp = getCertTimestamp(cert);
     const current = latestByKey.get(key);
     if (!current || timestamp >= current.timestamp) {
       latestByKey.set(key, { timestamp, cert });
@@ -44,11 +48,7 @@ const getLatestCertificates = (certificates) => {
       const key = cert?.training?.id || cert?.training?.name || cert?.osid;
       return key ? latestByKey.get(key)?.cert === cert : true;
     })
-    .sort((a, b) => {
-      const dateA = new Date(a?.osCreatedAt || 0).getTime();
-      const dateB = new Date(b?.osCreatedAt || 0).getTime();
-      return dateB - dateA;
-    });
+    .sort((a, b) => getCertTimestamp(b) - getCertTimestamp(a));
 };
 
 const Certificate = () => {
