@@ -66,7 +66,7 @@ export const getUserToken = async (basePath = '') => {
 export const onMessageListener = async () => {
   const messaging = await messagingPromise
   if (!messaging) {
-    return Promise.reject(new Error('Firebase messaging is not supported'))
+    throw new Error('Firebase messaging is not supported')
   }
   return new Promise((resolve) => {
     onMessage(messaging, (payload) => {
