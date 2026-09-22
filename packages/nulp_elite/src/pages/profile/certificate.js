@@ -23,7 +23,8 @@ import { Loading } from "@shiksha/common-lib";
 
 const getCertTimestamp = (cert) => {
   const issuedOn = cert?.osCreatedAt || cert?.issuer?.osUpdatedAt;
-  return issuedOn ? new Date(issuedOn).getTime() : 0;
+  const timestamp = issuedOn ? new Date(issuedOn).getTime() : 0;
+  return Number.isNaN(timestamp) ? 0 : timestamp;
 };
 
 const getLatestCertificates = (certificates) => {
