@@ -21,6 +21,36 @@ import html2pdf from "html2pdf.js";
 const routeConfig = require("../../configs/routeConfig.json");
 import { Loading } from "@shiksha/common-lib";
 
+const getLatestCertificates = (certificates) => {
+  const certList = Array.isArray(certificates)
+    ? certificates
+    : certificates?.result?.response?.content ||
+      certificates?.result?.certificates ||
+      certificates?.certificates ||
+      [];
+  const latestByKey = new Map();
+  certList.forEach((cert) => {
+    const key = cert?.training?.id || cert?.training?.name || cert?.osid;
+    if (!key) return;
+    const issuedOn = cert?.osCreatedAt || cert?.issuer?.osUpdatedAt;
+    const timestamp = issuedOn ? new Date(issuedOn).getTime() : 0;
+    const current = latestByKey.get(key);
+    if (!current || timestamp >= current.timestamp) {
+      latestByKey.set(key, { timestamp, cert });
+    }
+  });
+  return certList
+    .filter((cert) => {
+      const key = cert?.training?.id || cert?.training?.name || cert?.osid;
+      return key ? latestByKey.get(key)?.cert === cert : true;
+    })
+    .sort((a, b) => {
+      const dateA = new Date(a?.osCreatedAt || 0).getTime();
+      const dateB = new Date(b?.osCreatedAt || 0).getTime();
+      return dateB - dateA;
+    });
+};
+
 const Certificate = () => {
   const { t } = useTranslation();
   const [certData, setCertData] = useState(null);
@@ -73,6 +103,13 @@ const Certificate = () => {
         const url = `${urlConfig.URLS.LEARNER_PREFIX}${urlConfig.URLS.CERTIFICATE.CERT_SEARCH}`;
         const response = await axios.post(url, request);
         const data = response.data;
+        if (data?.result?.response?.content) {
+          data.result.response.content.sort((a, b) => {
+            const dateA = new Date(a?._source?.data?.issuedOn || 0).getTime();
+            const dateB = new Date(b?._source?.data?.issuedOn || 0).getTime();
+            return dateB - dateA;
+          });
+        }
         setCertData(data);
       } catch (error) {
         console.error("Error fetching user data:", error);
@@ -94,7 +131,7 @@ const Certificate = () => {
         const response = await axios.post(url, request);
         const data = response.data;
 
-        setOtherCertData(data);
+        setOtherCertData(getLatestCertificates(data));
       } catch (error) {
         console.error("Error fetching user data:", error);
         showErrorMessage(t("FAILED_TO_FETCH_DATA"));
