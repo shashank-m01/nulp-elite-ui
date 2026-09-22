@@ -1,6 +1,11 @@
 import { initializeApp } from 'firebase/app'
 //import 'firebase/messaging'
-import { getMessaging, getToken, onMessage } from 'firebase/messaging'
+import {
+  getMessaging,
+  getToken,
+  onMessage,
+  isSupported
+} from 'firebase/messaging'
 import { useToast, Pressable, VStack, HStack, Box } from 'native-base'
 import Subtitle from '../layout/HeaderTags/Subtitle'
 import H1 from '../layout/HeaderTags/H1'
@@ -20,13 +25,24 @@ const firebaseConfig = {
 initializeApp(firebaseConfig)
 
 const firebaseApp = initializeApp(firebaseConfig)
-const messaging = getMessaging(firebaseApp)
+const isServiceWorkerAvailable = () =>
+  typeof navigator !== 'undefined' && 'serviceWorker' in navigator
+
+const messagingPromise = isServiceWorkerAvailable()
+  ? isSupported()
+      .then((supported) => (supported ? getMessaging(firebaseApp) : null))
+      .catch(() => null)
+  : Promise.resolve(null)
 
 const publicKey =
   'BFls0-nyyXAB7s9cuDx42ROIIoLD-N_pby0lh3clKxHgpsRdZtLpNRFD_n5Y5crh8o_6yiGPXgG60stW1xel2Hg'
 
 export const getUserToken = async (basePath = '') => {
   try {
+    const messaging = await messagingPromise
+    if (!messaging) {
+      return ''
+    }
     if (basePath && basePath !== '') {
       const path = basePath + '/firebase-messaging-sw.js'
       const serviceWorkerRegistration = await navigator.serviceWorker.register(
@@ -47,12 +63,17 @@ export const getUserToken = async (basePath = '') => {
   }
 }
 
-export const onMessageListener = () =>
-  new Promise((resolve) => {
+export const onMessageListener = async () => {
+  const messaging = await messagingPromise
+  if (!messaging) {
+    throw new Error('Firebase messaging is not supported')
+  }
+  return new Promise((resolve) => {
     onMessage(messaging, (payload) => {
       resolve(payload)
     })
   })
+}
 
 export const PushNotification = () => {
   const toast = useToast()
