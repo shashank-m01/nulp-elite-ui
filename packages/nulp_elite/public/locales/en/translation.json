@@ -441,5 +441,13 @@
   "NEXT": "Next",
   "NEXT_MODULE": "Next Module",
   "PREVIOUS": "Previous",
-  "PREVIOUS_MODULE": "Previous Module"
+  "PREVIOUS_MODULE": "Previous Module",
+  "ASSESSMENT_CHECKING_RESULT": "Checking your result...",
+  "ASSESSMENT_PASSED_TITLE": "You have passed the assessment",
+  "ASSESSMENT_PASSED_MESSAGE": "Congratulations! You have successfully cleared it.",
+  "CERTIFICATE_DOWNLOAD_HINT": "Once your certificate is issued, you can download it from your Profile.",
+  "ASSESSMENT_FAILED_TITLE": "You have not passed the assessment",
+  "YOU_SCORED": "You scored",
+  "REDO_TO_IMPROVE_SCORE": "You can redo the assessment to improve your score.",
+  "REDO": "Redo"
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useLocation } from "react-router-dom";
 import Footer from "components/Footer";
@@ -83,6 +83,22 @@ const Player = () => {
   const [playerContent, setPlayerContent] = useState();
   const [noPreviewAvailable, setNoPreviewAvailable] = useState(false);
   const [isEndEventReceived, setIsEndEventReceived] = useState(false);
+  // Timestamp of the last END event. Separate from isEndEventReceived, which is
+  // reset once the content state has been submitted.
+  const [assessmentEndedAt, setAssessmentEndedAt] = useState(null);
+  // null while the player is running; otherwise { status, score, maxScore, criteria }
+  // where status is "checking" | "passed" | "failed".
+  const [assessmentResult, setAssessmentResult] = useState(null);
+  // Bumped to remount the player iframe, which restarts the content.
+  const [playerInstance, setPlayerInstance] = useState(0);
+  // Batch pass criteria doesn't change between attempts in the same session, so
+  // it is fetched once and reused - each Redo previously fired it again, adding
+  // an extra concurrent authenticated request on every attempt.
+  const criteriaCacheRef = useRef({ batchId: null, known: false, value: undefined });
+  // Attempts made so far this session (the initial load counts as attempt 1),
+  // as a floor under the server's recorded count - see the comment in
+  // resolveAssessmentResult on why the two can disagree by one.
+  const attemptsThisSessionRef = useRef(1);
 
   // const playerUrl = `${window.location.origin}/newplayer`;
   const playerUrl =
@@ -194,6 +210,7 @@ const Player = () => {
         "END event received. Waiting for assessEvents to match propLength..."
       );
       setIsEndEventReceived(true); // mark END event received
+      setAssessmentEndedAt(Date.now());
       // await updateContentState(2);
     } else if (data.eid === "START" && playerType === "ecml") {
       // console.log("Processing START event for ecml");
@@ -290,6 +307,223 @@ const Player = () => {
       console.error("Error updating content state:", error);
     }
   }, [_userId, contentId, batchId, courseId, assessEvents]);
+
+  // ── Assessment result ─────────────────────────────────────────────────────
+  // Shown over the player once an assessment ends: whether the learner cleared
+  // the batch's pass criteria. Mirrors the check the course page does.
+
+  const isAssessmentContent = useMemo(() => {
+    const primaryCategory = (lesson?.primaryCategory || "").toLowerCase();
+    const contentType = (lesson?.contentType || "").toLowerCase();
+    return primaryCategory === "course assessment" || contentType === "selfassess";
+  }, [lesson]);
+
+  // Score of the attempt that just finished, from its ASSESS telemetry.
+  const scoreFromAssessEvents = (events) => {
+    let score = 0;
+    let maxScore = 0;
+    (events || []).forEach((event) => {
+      const edata = event?.edata;
+      if (typeof edata?.score === "number") {
+        score += edata.score;
+      }
+      if (typeof edata?.item?.maxscore === "number") {
+        maxScore += edata.item.maxscore;
+      }
+    });
+    return { score, maxScore };
+  };
+
+  // Pass percentage off the batch certificate template, or undefined when the
+  // batch has none configured.
+  const readScoreCriteria = (result) => {
+    const response = result?.response;
+    const certTemplates = response?.certTemplates || response?.cert_templates;
+    if (!certTemplates || typeof certTemplates !== "object") {
+      return undefined;
+    }
+    const templateId = Object.keys(certTemplates)[0];
+    const criteria = certTemplates[templateId]?.criteria?.assessment;
+    const value = Number(criteria?.score?.[">="]);
+    return Number.isFinite(value) ? value : undefined;
+  };
+
+  // Max attempts allowed for this content, from the batch's course hierarchy -
+  // the same source and fallback the course page already uses to show
+  // "X/Y attempts left" before the learner even opens the content, so the
+  // limit enforced here always matches what was advertised there.
+  const findMaxAttempts = (targetContentId, children) => {
+    for (const child of children || []) {
+      if (child.children) {
+        for (const grandchild of child.children) {
+          if (grandchild.identifier === targetContentId && grandchild.maxAttempts) {
+            return grandchild.maxAttempts;
+          }
+        }
+      }
+    }
+    return 10; // Default if not found - matches joinCourse.js's own fallback.
+  };
+
+  // Attempts already recorded on the server for this content.
+  const readRecordedAttemptCount = (result) => {
+    const entry = result?.contentList?.find(
+      (item) => item?.contentId === contentId
+    );
+    return Array.isArray(entry?.score) ? entry.score.length : 0;
+  };
+
+  // Best percentage across the attempts the server already has on record.
+  const readRecordedBestPercentage = (result) => {
+    const entry = result?.contentList?.find(
+      (item) => item?.contentId === contentId
+    );
+    if (!Array.isArray(entry?.score) || entry.score.length === 0) {
+      return undefined;
+    }
+    const best = entry.score.reduce((bestSoFar, current) =>
+      Number.parseFloat(current.totalScore) >
+      Number.parseFloat(bestSoFar.totalScore)
+        ? current
+        : bestSoFar
+    );
+    const scored = Number.parseFloat(best.totalScore);
+    const maxScore = Number.parseFloat(best.totalMaxScore);
+    if (!Number.isFinite(scored) || !Number.isFinite(maxScore) || !maxScore) {
+      return undefined;
+    }
+    return (scored / maxScore) * 100;
+  };
+
+  const resolveAssessmentResult = useCallback(async () => {
+    const { score, maxScore } = scoreFromAssessEvents(assessEvents);
+    const currentAttempt = maxScore > 0 ? (score / maxScore) * 100 : undefined;
+    setAssessmentResult({ status: "checking", score, maxScore });
+
+    // Both APIs need a session. Without one we cannot confirm a pass, and we
+    // must not claim one. Attempt limits can't be resolved without course
+    // context either, so Redo stays available - same as the legacy plugin,
+    // which only enforced this for "Course Assessment" content.
+    if (!_userId || !batchId || !courseId) {
+      setAssessmentResult({ status: "failed", score, maxScore });
+      return;
+    }
+
+    const maxAttempts = courseHierarchy?.children
+      ? findMaxAttempts(contentId, courseHierarchy.children)
+      : undefined;
+
+    // Reuse the criteria from an earlier attempt this session instead of
+    // firing another authenticated request - see criteriaCacheRef above.
+    let criteriaKnown = criteriaCacheRef.current.batchId === batchId
+      && criteriaCacheRef.current.known;
+    let criteria = criteriaKnown ? criteriaCacheRef.current.value : undefined;
+
+    if (!criteriaKnown) {
+      try {
+        const url = `${urlConfig.URLS.LEARNER_PREFIX}${urlConfig.URLS.BATCH.GET_DETAILS}/${batchId}`;
+        const response = await axios.get(url);
+        criteria = readScoreCriteria(response?.data?.result);
+        criteriaKnown = true;
+        criteriaCacheRef.current = { batchId, known: true, value: criteria };
+      } catch (error) {
+        console.error("Unable to read batch pass criteria:", error);
+      }
+    }
+
+    // Sequenced after the criteria request rather than run alongside it -
+    // firing two authenticated requests together is what makes a Keycloak
+    // grant-refresh race (see server.js's stale-session check) far more
+    // likely to clear the portal session cookie mid-request.
+    let recordedBest;
+    let recordedAttemptCount = 0;
+    try {
+      const url = `${urlConfig.URLS.CONTENT_PREFIX}${urlConfig.URLS.COURSE.USER_CONTENT_STATE_READ}`;
+      const response = await axios.post(url, {
+        request: {
+          userId: _userId,
+          courseId,
+          contentIds: [contentId],
+          batchId,
+          fields: ["progress", "score"],
+        },
+      });
+      recordedBest = readRecordedBestPercentage(response?.data?.result);
+      recordedAttemptCount = readRecordedAttemptCount(response?.data?.result);
+    } catch (error) {
+      console.error("Unable to read recorded assessment scores:", error);
+    }
+
+    // The attempt that just finished is submitted to the server on a short
+    // delay (see updateContentStateForAssessment), so it may not be reflected
+    // in recordedAttemptCount yet - the +1 accounts for it, same as the legacy
+    // plugin's "content.currentAttempt = content.currentAttempt + 1". The
+    // session-local counter is a floor under that, in case the server call
+    // above failed or the delayed submit landed even later than expected.
+    const attemptsUsed = Math.max(
+      recordedAttemptCount + 1,
+      attemptsThisSessionRef.current
+    );
+    const attemptsExhausted =
+      maxAttempts !== undefined && attemptsUsed >= maxAttempts;
+
+    // The attempt that just finished may not have reached the server yet, so it
+    // is considered alongside what is on record.
+    const percentages = [recordedBest, currentAttempt].filter((value) =>
+      Number.isFinite(value)
+    );
+    const bestPercentage = percentages.length
+      ? Math.max(...percentages)
+      : undefined;
+
+    // Could not reach the criteria - say nothing about passing.
+    if (!criteriaKnown) {
+      setAssessmentResult({ status: "failed", score, maxScore, attemptsExhausted });
+      return;
+    }
+    // Batch genuinely has no pass criteria - nothing to fail against.
+    if (criteria === undefined) {
+      setAssessmentResult({ status: "passed", score, maxScore });
+      return;
+    }
+    setAssessmentResult({
+      status:
+        Number.isFinite(bestPercentage) && bestPercentage >= criteria
+          ? "passed"
+          : "failed",
+      score,
+      maxScore,
+      criteria,
+      attemptsExhausted,
+    });
+  }, [assessEvents, _userId, batchId, courseId, contentId, courseHierarchy]);
+
+  // resolveAssessmentResult is rebuilt whenever assessEvents changes, so the
+  // timestamp is tracked to keep this to one resolution per attempt.
+  const resolvedEndRef = useRef(null);
+
+  useEffect(() => {
+    if (!assessmentEndedAt || !isAssessmentContent) {
+      return;
+    }
+    if (resolvedEndRef.current === assessmentEndedAt) {
+      return;
+    }
+    resolvedEndRef.current = assessmentEndedAt;
+    resolveAssessmentResult();
+  }, [assessmentEndedAt, isAssessmentContent, resolveAssessmentResult]);
+
+  const redoAssessment = useCallback(() => {
+    attemptsThisSessionRef.current += 1;
+    resolvedEndRef.current = null;
+    setAssessmentResult(null);
+    setAssessmentEndedAt(null);
+    setAssessEvents([]);
+    setPropLength(undefined);
+    setIsEndEventReceived(false);
+    setHasCalledUpdateAPI(false);
+    setPlayerInstance((instance) => instance + 1);
+  }, []);
 
   useEffect(() => {
     console.log(
@@ -1290,6 +1524,7 @@ const Player = () => {
           >
             {lesson ? (
               <SunbirdPlayer
+                key={playerInstance}
                 {...lesson}
                 width="100%"
                 height="100%"
@@ -1350,6 +1585,63 @@ const Player = () => {
               />
             ) : (
               <Box className="player-empty-state">{t("NO_CONTENT_TO_PLAY")}</Box>
+            )}
+
+            {assessmentResult && (
+              <Box className="assessment-result">
+                {assessmentResult.status === "checking" ? (
+                  <Typography className="assessment-result__message">
+                    {t("ASSESSMENT_CHECKING_RESULT")}
+                  </Typography>
+                ) : (
+                  <>
+                    <Box
+                      className={`assessment-result__icon assessment-result__icon--${assessmentResult.status}`}
+                      aria-hidden="true"
+                    >
+                      {assessmentResult.status === "passed" ? "\u2713" : "\u2715"}
+                    </Box>
+                    <Typography
+                      className={`assessment-result__title assessment-result__title--${assessmentResult.status}`}
+                    >
+                      {assessmentResult.status === "passed"
+                        ? t("ASSESSMENT_PASSED_TITLE")
+                        : t("ASSESSMENT_FAILED_TITLE")}
+                    </Typography>
+                    <Typography className="assessment-result__message">
+                      {assessmentResult.status === "passed" ? (
+                        t("ASSESSMENT_PASSED_MESSAGE")
+                      ) : assessmentResult.attemptsExhausted ? (
+                        <>
+                          {t("YOU_SCORED")} {assessmentResult.score}/
+                          {assessmentResult.maxScore}. {t("MAX_ATTEMPTS_EXCEEDED")}
+                        </>
+                      ) : (
+                        <>
+                          {t("YOU_SCORED")} {assessmentResult.score}/
+                          {assessmentResult.maxScore}. {t("REDO_TO_IMPROVE_SCORE")}
+                        </>
+                      )}
+                    </Typography>
+                    {assessmentResult.status === "passed" &&
+                      Number.isFinite(assessmentResult.criteria) && (
+                        <Typography className="assessment-result__message">
+                          {t("CERTIFICATE_DOWNLOAD_HINT")}
+                        </Typography>
+                      )}
+                    {assessmentResult.status === "failed" &&
+                      !assessmentResult.attemptsExhausted && (
+                        <Button
+                          variant="outlined"
+                          className="assessment-result__redo"
+                          onClick={redoAssessment}
+                        >
+                          {t("REDO")}
+                        </Button>
+                      )}
+                  </>
+                )}
+              </Box>
             )}
           </Box>
 

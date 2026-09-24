@@ -223,6 +223,91 @@ button {
   border: 0;
 }
 
+/* Assessment result panel, shown over the player once an assessment ends.
+   .player-ratio-box is position:relative, so this covers exactly the player.
+   The --flexible variant forces every direct child to position:static with a
+   fixed height, both !important, so those two have to be overridden here or the
+   panel drops below the player instead of covering it. */
+.player-ratio-box > .assessment-result {
+  position: absolute !important;
+  inset: 0;
+  height: auto !important;
+  min-height: 0;
+  z-index: 2;
+  display: -webkit-box;
+  display: -ms-flexbox;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px 16px;
+  background: #ffffff;
+}
+
+.assessment-result__icon {
+  width: 56px;
+  height: 56px;
+  margin-bottom: 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.assessment-result__icon--passed {
+  background: #1b7a43;
+}
+
+.assessment-result__icon--failed {
+  background: #c62828;
+}
+
+.assessment-result__title {
+  font-size: 20px !important;
+  font-weight: 700 !important;
+  margin-bottom: 8px !important;
+}
+
+.assessment-result__title--passed {
+  color: #1b7a43;
+}
+
+.assessment-result__title--failed {
+  color: #c62828;
+}
+
+.assessment-result__message {
+  color: #424242;
+  font-size: 16px !important;
+  max-width: 36em;
+}
+
+.assessment-result__redo {
+  margin-top: 24px !important;
+  color: #c62828 !important;
+  border-color: #c62828 !important;
+  padding: 8px 40px !important;
+}
+
+.assessment-result__redo:hover {
+  background: #c62828 !important;
+  color: #ffffff !important;
+}
+
+@media (max-width: 600px) {
+  .assessment-result__title {
+    font-size: 17px !important;
+  }
+  .assessment-result__message {
+    font-size: 14px !important;
+  }
+}
+
 .player-ratio-box .player-empty-state {
   position: absolute;
   inset: 0;
@@ -238,6 +323,17 @@ button {
    as browser zoom increases while the player's content simultaneously needs more room to
    reflow, so the internal layout gets clipped. A generous, zoom-independent fixed px height
    keeps the iframe's box big enough for that internal layout at any zoom level. */
+.player-ratio-box.player-ratio-box--flexible > .assessment-result {
+  /* Specificity note above: this must stay at 3 classes to keep beating the
+     "> div" rule two selectors up, which also targets this element (it is a
+     div) with equal !important weight. */
+  position: absolute !important;
+  height: auto !important;
+  width: auto !important;
+  min-height: 0;
+  inset: 0;
+}
+
 .player-ratio-box.player-ratio-box--flexible {
   padding-bottom: 0;
   height: auto;
