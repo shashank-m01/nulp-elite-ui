@@ -239,7 +239,7 @@ const ContentList = (props) => {
   const buildRequestData = () => {
     const primaryCategory = contentTypeFilter.length > 0
       ? contentTypeFilter
-      : ["Collection","Resource","Course","eTextbook","Explanation Content","Learning Resource","Practice Question Set","ExplanationResource","Practice Resource","Exam Question","Good Practices","Reports","Manual/SOPs"];
+      : ["Collection","Resource","Course","eTextbook","Explanation Content","Practice Question Set","ExplanationResource","Practice Resource","Exam Question","Good Practices","Reports","Manual/SOPs"];
 
     const boardFilter = domainfilter.se_board
       ? { se_boards: domainfilter.se_board }
