@@ -32,6 +32,75 @@ import md5 from "md5";
 import { isEmpty, set } from "lodash";
 const urlConfig = require("../../configs/urlConfig.json");
 const routeConfig = require("../../configs/routeConfig.json");
+
+// Message under the pass/fail title. Kept free of nested ternaries (S3358).
+const buildAssessmentMessage = (result, t) => {
+  if (result.status === "passed") {
+    return t("ASSESSMENT_PASSED_MESSAGE");
+  }
+  const outcome = result.attemptsExhausted
+    ? t("MAX_ATTEMPTS_EXCEEDED")
+    : t("REDO_TO_IMPROVE_SCORE");
+  return (
+    <>
+      {t("YOU_SCORED")} {result.score}/{result.maxScore}. {outcome}
+    </>
+  );
+};
+
+// Overlay over the player once an assessment ends. Separate from Player so
+// this UI's branching does not count toward Player's cognitive complexity.
+const AssessmentResultOverlay = ({ result, onRedo }) => {
+  const { t } = useTranslation();
+
+  if (result.status === "checking") {
+    return (
+      <Box className="assessment-result">
+        <Typography className="assessment-result__message">
+          {t("ASSESSMENT_CHECKING_RESULT")}
+        </Typography>
+      </Box>
+    );
+  }
+
+  const passed = result.status === "passed";
+  const showCertificateHint = passed && Number.isFinite(result.criteria);
+  const showRedo = !passed && !result.attemptsExhausted;
+
+  return (
+    <Box className="assessment-result">
+      <Box
+        className={`assessment-result__icon assessment-result__icon--${result.status}`}
+        aria-hidden="true"
+      >
+        {passed ? "✓" : "✕"}
+      </Box>
+      <Typography
+        className={`assessment-result__title assessment-result__title--${result.status}`}
+      >
+        {passed ? t("ASSESSMENT_PASSED_TITLE") : t("ASSESSMENT_FAILED_TITLE")}
+      </Typography>
+      <Typography className="assessment-result__message">
+        {buildAssessmentMessage(result, t)}
+      </Typography>
+      {showCertificateHint && (
+        <Typography className="assessment-result__message">
+          {t("CERTIFICATE_DOWNLOAD_HINT")}
+        </Typography>
+      )}
+      {showRedo && (
+        <Button
+          variant="outlined"
+          className="assessment-result__redo"
+          onClick={onRedo}
+        >
+          {t("REDO")}
+        </Button>
+      )}
+    </Box>
+  );
+};
+
 const Player = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -1588,60 +1657,10 @@ const Player = () => {
             )}
 
             {assessmentResult && (
-              <Box className="assessment-result">
-                {assessmentResult.status === "checking" ? (
-                  <Typography className="assessment-result__message">
-                    {t("ASSESSMENT_CHECKING_RESULT")}
-                  </Typography>
-                ) : (
-                  <>
-                    <Box
-                      className={`assessment-result__icon assessment-result__icon--${assessmentResult.status}`}
-                      aria-hidden="true"
-                    >
-                      {assessmentResult.status === "passed" ? "\u2713" : "\u2715"}
-                    </Box>
-                    <Typography
-                      className={`assessment-result__title assessment-result__title--${assessmentResult.status}`}
-                    >
-                      {assessmentResult.status === "passed"
-                        ? t("ASSESSMENT_PASSED_TITLE")
-                        : t("ASSESSMENT_FAILED_TITLE")}
-                    </Typography>
-                    <Typography className="assessment-result__message">
-                      {assessmentResult.status === "passed" ? (
-                        t("ASSESSMENT_PASSED_MESSAGE")
-                      ) : assessmentResult.attemptsExhausted ? (
-                        <>
-                          {t("YOU_SCORED")} {assessmentResult.score}/
-                          {assessmentResult.maxScore}. {t("MAX_ATTEMPTS_EXCEEDED")}
-                        </>
-                      ) : (
-                        <>
-                          {t("YOU_SCORED")} {assessmentResult.score}/
-                          {assessmentResult.maxScore}. {t("REDO_TO_IMPROVE_SCORE")}
-                        </>
-                      )}
-                    </Typography>
-                    {assessmentResult.status === "passed" &&
-                      Number.isFinite(assessmentResult.criteria) && (
-                        <Typography className="assessment-result__message">
-                          {t("CERTIFICATE_DOWNLOAD_HINT")}
-                        </Typography>
-                      )}
-                    {assessmentResult.status === "failed" &&
-                      !assessmentResult.attemptsExhausted && (
-                        <Button
-                          variant="outlined"
-                          className="assessment-result__redo"
-                          onClick={redoAssessment}
-                        >
-                          {t("REDO")}
-                        </Button>
-                      )}
-                  </>
-                )}
-              </Box>
+              <AssessmentResultOverlay
+                result={assessmentResult}
+                onRedo={redoAssessment}
+              />
             )}
           </Box>
 
